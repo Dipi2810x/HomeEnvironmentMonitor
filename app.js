@@ -16,6 +16,9 @@ let latestReading = null;
 let pollenSnapshot = null;
 let userCoords = null;
 const sampleBuffer = [];
+const emptyReading = { pm1: Number.NaN, pm25: Number.NaN, pm10: Number.NaN };
+let serialPartialReading = { ...emptyReading };
+let csvDaySeries = [];
 
 const chart = new Chart(document.getElementById("trendChart"), {
   type: "line",
@@ -65,15 +68,17 @@ const stored = localStorage.getItem("pmPollenLog");
 const snapshotLog = stored ? JSON.parse(stored) : [];
 renderTable();
 renderChart();
+refreshCsvDayData();
 
 connectBtn.addEventListener("click", connectArduino);
 locationBtn.addEventListener("click", requestLocation);
 
 setInterval(captureFiveMinuteSnapshot, 5 * 60 * 1000);
 setInterval(updatePollen, 5 * 60 * 1000);
-
+setInterval(refreshCsvDayData, 5 * 60 * 1000);
 if (navigator.serial === undefined) {
-  setStatus("Web Serial not available. Use Chrome or Edge on desktop.", true);
+  setStatus("Web Serial is not available in this browser. Use Chrome or Edge on desktop.", true);
+  connectBtn.disabled = true;
 }
 
 async function connectArduino() {
@@ -88,10 +93,12 @@ async function connectArduino() {
     await port.open({ baudRate: 9600 });
 
     keepReading = true;
+    connectBtn.disabled = true;
     setStatus("Arduino connected. Reading sensor stream...");
     await readSerialLines();
   } catch (err) {
     setStatus(`Connection failed: ${err.message}`, true);
+    connectBtn.disabled = false;
   }
 }
 
@@ -125,36 +132,51 @@ function parseSerialLine(line) {
     return;
   }
 
+  const result = extractReadingFromLine(line, serialPartialReading);
+  serialPartialReading = result.partial;
+
+  if (result.complete) {
+    updateReading(result.reading);
+    serialPartialReading = { ...emptyReading };
+  }
+}
+
+function extractReadingFromLine(line, partialInput = emptyReading) {
+  const partial = { ...partialInput };
+
   if (line.startsWith("{")) {
     try {
       const data = JSON.parse(line);
-      updateReading({
+      const reading = {
         pm1: Number(data.pm1_0),
         pm25: Number(data.pm2_5),
         pm10: Number(data.pm10)
-      });
-      return;
+      };
+      if (isCompleteReading(reading)) {
+        return { complete: true, reading, partial: { ...emptyReading } };
+      }
     } catch {
       // Ignore malformed JSON lines.
     }
   }
 
-  const pm1 = /PM1\.0:\s*([\d.]+)/i.exec(line);
-  const pm25 = /PM2\.5\s*:\s*([\d.]+)/i.exec(line);
-  const pm10 = /PM10\s*:\s*([\d.]+)/i.exec(line);
+  const pm1 = /PM\s*1\.0\s*:\s*([\d.]+)/i.exec(line);
+  const pm25 = /PM\s*2\.5\s*:\s*([\d.]+)/i.exec(line);
+  const pm10 = /PM\s*10(?:\.0)?\s*:\s*([\d.]+)/i.exec(line);
 
-  if (pm1 || pm25 || pm10) {
-    const partial = latestReading || { pm1: NaN, pm25: NaN, pm10: NaN };
-    if (pm1) partial.pm1 = Number(pm1[1]);
-    if (pm25) partial.pm25 = Number(pm25[1]);
-    if (pm10) partial.pm10 = Number(pm10[1]);
+  if (pm1) partial.pm1 = Number(pm1[1]);
+  if (pm25) partial.pm25 = Number(pm25[1]);
+  if (pm10) partial.pm10 = Number(pm10[1]);
 
-    if (Number.isFinite(partial.pm1) && Number.isFinite(partial.pm25) && Number.isFinite(partial.pm10)) {
-      updateReading(partial);
-    } else {
-      latestReading = partial;
-    }
+  if (isCompleteReading(partial)) {
+    return { complete: true, reading: { ...partial }, partial: { ...emptyReading } };
   }
+
+  return { complete: false, reading: null, partial };
+}
+
+function isCompleteReading(reading) {
+  return Number.isFinite(reading.pm1) && Number.isFinite(reading.pm25) && Number.isFinite(reading.pm10);
 }
 
 function updateReading(reading) {
@@ -222,11 +244,116 @@ function renderTable() {
 }
 
 function renderChart() {
+  if (csvDaySeries.length > 0) {
+    chart.data.datasets[0].label = "PM2.5 (today)";
+    chart.data.datasets[1].label = "Grass Pollen";
+    chart.data.labels = csvDaySeries.map((r) => r.timeLabel);
+    chart.data.datasets[0].data = csvDaySeries.map((r) => Number(r.pm25.toFixed(1)));
+    chart.data.datasets[1].data = csvDaySeries.map(() => null);
+    chart.update();
+    return;
+  }
+
   const recent = [...snapshotLog].slice(0, 36).reverse();
+  chart.data.datasets[0].label = "PM2.5";
+  chart.data.datasets[1].label = "Grass Pollen";
   chart.data.labels = recent.map((r) => shortTime(r.time));
   chart.data.datasets[0].data = recent.map((r) => Number(r.pm25.toFixed(1)));
   chart.data.datasets[1].data = recent.map((r) => (r.pollen === null ? null : Number(r.pollen.toFixed(1))));
   chart.update();
+}
+
+async function refreshCsvDayData() {
+  try {
+    const response = await fetch(`arduino_data.csv?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const csvText = await response.text();
+    const daySeries = buildTodaySeriesFromCsv(csvText);
+    if (daySeries.length === 0) {
+      return;
+    }
+
+    csvDaySeries = daySeries;
+    const latest = daySeries[daySeries.length - 1];
+    if (latest) {
+      updateReading({ pm1: latest.pm1, pm25: latest.pm25, pm10: latest.pm10 });
+    }
+    renderChart();
+  } catch (err) {
+    console.warn(`CSV refresh skipped: ${err.message}`);
+  }
+}
+
+function buildTodaySeriesFromCsv(csvText) {
+  const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length <= 1) {
+    return [];
+  }
+
+  const now = new Date();
+  const buckets = new Map();
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = parseCsvTimestampRawLine(lines[i]);
+    if (!row) {
+      continue;
+    }
+
+    const ts = new Date(row.timestamp);
+    if (Number.isNaN(ts.getTime()) || !isSameLocalDay(ts, now)) {
+      continue;
+    }
+
+    const parsed = extractReadingFromLine(row.raw, emptyReading);
+    if (!parsed.complete) {
+      continue;
+    }
+
+    const bucketTs = floorToFiveMinutes(ts.getTime());
+    const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0 };
+    current.pm1 += parsed.reading.pm1;
+    current.pm25 += parsed.reading.pm25;
+    current.pm10 += parsed.reading.pm10;
+    current.count += 1;
+    buckets.set(bucketTs, current);
+  }
+
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([bucketTs, value]) => ({
+      ts: bucketTs,
+      timeLabel: new Date(bucketTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      pm1: value.pm1 / value.count,
+      pm25: value.pm25 / value.count,
+      pm10: value.pm10 / value.count
+    }));
+}
+
+function parseCsvTimestampRawLine(line) {
+  const commaIdx = line.indexOf(",");
+  if (commaIdx <= 0) {
+    return null;
+  }
+
+  const timestamp = line.slice(0, commaIdx).trim();
+  let raw = line.slice(commaIdx + 1).trim();
+  if (raw.startsWith('"') && raw.endsWith('"')) {
+    raw = raw.slice(1, -1).replace(/""/g, '"');
+  }
+
+  return { timestamp, raw };
+}
+
+function isSameLocalDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function floorToFiveMinutes(tsMs) {
+  const fiveMinutesMs = 5 * 60 * 1000;
+  return Math.floor(tsMs / fiveMinutesMs) * fiveMinutesMs;
 }
 
 function shortTime(text) {
@@ -262,7 +389,7 @@ async function updatePollen() {
     return;
   }
 
-  const url = `https://pollen-api.open-meteo.com/v1/forecast?latitude=${userCoords.latitude}&longitude=${userCoords.longitude}&hourly=grass_pollen&forecast_days=1`;
+  const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${userCoords.latitude}&longitude=${userCoords.longitude}&hourly=grass_pollen&forecast_days=1`;
 
   try {
     const response = await fetch(url);
@@ -272,7 +399,7 @@ async function updatePollen() {
 
     const payload = await response.json();
     const { time, grass_pollen: grassPollen } = payload.hourly || {};
-    if (!time || !grassPollen || time.length === 0) {
+    if (!time || !grassPollen || time.length === 0 || grassPollen.length === 0) {
       throw new Error("No pollen values found");
     }
 
@@ -280,6 +407,9 @@ async function updatePollen() {
     let bestIdx = 0;
     let bestGap = Infinity;
     for (let i = 0; i < time.length; i += 1) {
+      if (!Number.isFinite(Number(grassPollen[i]))) {
+        continue;
+      }
       const gap = Math.abs(new Date(time[i]).getTime() - now);
       if (gap < bestGap) {
         bestGap = gap;
@@ -287,8 +417,13 @@ async function updatePollen() {
       }
     }
 
+    if (!Number.isFinite(Number(grassPollen[bestIdx]))) {
+      throw new Error("Pollen data unavailable for your location right now");
+    }
+
     pollenSnapshot = Number(grassPollen[bestIdx]);
     pollenValueEl.textContent = Number.isFinite(pollenSnapshot) ? pollenSnapshot.toFixed(1) : "-";
+    setStatus("Pollen data updated.");
   } catch (err) {
     setStatus(`Pollen fetch error: ${err.message}`, true);
   }

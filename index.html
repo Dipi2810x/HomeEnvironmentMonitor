@@ -17,14 +17,14 @@
     <header class="hero">
       <p class="eyebrow">LIVE AIR TRACKER</p>
       <h1>PM Sensor + Pollen Insight</h1>
-      <p class="subtitle">Reads your Arduino PM sensor live, builds 5-minute snapshots, and relates air quality to local pollen levels.</p>
+      <p class="subtitle">Connect your Arduino in the browser to stream real PM readings live, build 5-minute snapshots, and relate air quality to local pollen levels.</p>
     </header>
 
     <section class="card controls">
       <button id="connectBtn" class="btn btn-primary">Connect Arduino</button>
       <button id="locationBtn" class="btn btn-secondary">Use My Location</button>
       <p id="statusText" class="status">Status: Waiting to connect...</p>
-      <p class="help-text">Use Chrome/Edge over HTTPS (GitHub Pages supports this). Connect the board, then click Connect.</p>
+      <p class="help-text">Use Chrome or Edge on desktop, plug in the Arduino, then click Connect Arduino. The page reads the serial stream directly from the board.</p>
     </section>
 
     <section class="grid">
@@ -66,7 +66,7 @@
     </section>
 
     <section class="card">
-      <h2>5-Minute Trend</h2>
+      <h2>Today Trend (5-Minute Avg from CSV)</h2>
       <canvas id="trendChart" height="120"></canvas>
     </section>
 
