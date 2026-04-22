@@ -1,5 +1,5 @@
 const statusText = document.getElementById("statusText");
-const connectBtn = document.getElementById("connectBtn");
+const refreshCsvBtn = document.getElementById("refreshCsvBtn");
 const locationBtn = document.getElementById("locationBtn");
 const pm1El = document.getElementById("pm1");
 const pm25El = document.getElementById("pm25");
@@ -7,20 +7,15 @@ const pm10El = document.getElementById("pm10");
 const aqiValueEl = document.getElementById("aqiValue");
 const airCategoryEl = document.getElementById("airCategory");
 const pollenValueEl = document.getElementById("pollenValue");
+const aqiGaugeLabelEl = document.getElementById("aqiGaugeLabel");
 const logBody = document.getElementById("logBody");
 
-let port;
-let reader;
-let keepReading = false;
-let latestReading = null;
 let pollenSnapshot = null;
 let userCoords = null;
-const sampleBuffer = [];
-const emptyReading = { pm1: Number.NaN, pm25: Number.NaN, pm10: Number.NaN };
-let serialPartialReading = { ...emptyReading };
-let csvDaySeries = [];
+let latestReading = null;
+let snapshotLog = [];
 
-const chart = new Chart(document.getElementById("trendChart"), {
+const trendChart = new Chart(document.getElementById("trendChart"), {
   type: "line",
   data: {
     labels: [],
@@ -28,266 +23,150 @@ const chart = new Chart(document.getElementById("trendChart"), {
       {
         label: "PM2.5",
         data: [],
-        borderColor: "#ffb703",
-        backgroundColor: "rgba(255, 183, 3, 0.2)",
-        tension: 0.28,
+        borderColor: "#ff9f1c",
+        backgroundColor: "rgba(255, 159, 28, 0.24)",
+        borderWidth: 2,
+        tension: 0.32,
         fill: true
       },
       {
         label: "Grass Pollen",
         data: [],
-        borderColor: "#7dd3fc",
-        backgroundColor: "rgba(125, 211, 252, 0.12)",
-        tension: 0.28,
+        borderColor: "#2ec4b6",
+        backgroundColor: "rgba(46, 196, 182, 0.16)",
+        borderWidth: 2,
+        tension: 0.24,
         fill: true
+      }
+    ]
+  },
+  options: chartOptions()
+});
+
+const pmBreakdownChart = new Chart(document.getElementById("pmBreakdownChart"), {
+  type: "bar",
+  data: {
+    labels: ["PM1.0", "PM2.5", "PM10"],
+    datasets: [
+      {
+        label: "Latest ug/m3",
+        data: [0, 0, 0],
+        backgroundColor: ["#5fa8ff", "#ff9f1c", "#2ec4b6"],
+        borderRadius: 8
       }
     ]
   },
   options: {
     responsive: true,
     maintainAspectRatio: true,
-    scales: {
-      x: {
-        ticks: { color: "#9ac2b5" },
-        grid: { color: "rgba(154, 194, 181, 0.12)" }
-      },
-      y: {
-        ticks: { color: "#9ac2b5" },
-        grid: { color: "rgba(154, 194, 181, 0.12)" }
-      }
-    },
     plugins: {
       legend: {
-        labels: { color: "#e5f7f1" }
+        labels: { color: "#e8f6ff" }
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: "#9fc5dd" },
+        grid: { color: "rgba(159, 197, 221, 0.12)" }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: "#9fc5dd" },
+        grid: { color: "rgba(159, 197, 221, 0.12)" }
       }
     }
   }
 });
 
-const stored = localStorage.getItem("pmPollenLog");
-const snapshotLog = stored ? JSON.parse(stored) : [];
-renderTable();
-renderChart();
-refreshCsvDayData();
+const aqiGaugeChart = new Chart(document.getElementById("aqiGaugeChart"), {
+  type: "doughnut",
+  data: {
+    labels: ["AQI", "Remaining"],
+    datasets: [
+      {
+        data: [0, 500],
+        backgroundColor: ["#ff9f1c", "rgba(159, 197, 221, 0.2)"],
+        borderWidth: 0,
+        cutout: "74%"
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    rotation: -90,
+    circumference: 180,
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: false }
+    }
+  }
+});
 
-connectBtn.addEventListener("click", connectArduino);
+refreshCsvBtn.addEventListener("click", () => {
+  refreshCsvData(true);
+});
 locationBtn.addEventListener("click", requestLocation);
 
-setInterval(captureFiveMinuteSnapshot, 5 * 60 * 1000);
+setInterval(refreshCsvData, 5 * 60 * 1000);
 setInterval(updatePollen, 5 * 60 * 1000);
-setInterval(refreshCsvDayData, 5 * 60 * 1000);
-if (navigator.serial === undefined) {
-  setStatus("Web Serial is not available in this browser. Use Chrome or Edge on desktop.", true);
-  connectBtn.disabled = true;
-}
 
-async function connectArduino() {
-  if (!navigator.serial) {
-    setStatus("Web Serial unavailable in this browser.", true);
-    return;
-  }
+refreshCsvData();
 
-  try {
-    setStatus("Requesting serial port...");
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 9600 });
-
-    keepReading = true;
-    connectBtn.disabled = true;
-    setStatus("Arduino connected. Reading sensor stream...");
-    await readSerialLines();
-  } catch (err) {
-    setStatus(`Connection failed: ${err.message}`, true);
-    connectBtn.disabled = false;
-  }
-}
-
-async function readSerialLines() {
-  const decoder = new TextDecoderStream();
-  port.readable.pipeTo(decoder.writable);
-  const inputStream = decoder.readable;
-  reader = inputStream.getReader();
-
-  let lineBuffer = "";
-  while (keepReading) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    lineBuffer += value;
-    const lines = lineBuffer.split("\n");
-    lineBuffer = lines.pop();
-
-    for (const rawLine of lines) {
-      parseSerialLine(rawLine.trim());
-    }
-  }
-
-  reader.releaseLock();
-}
-
-function parseSerialLine(line) {
-  if (!line) {
-    return;
-  }
-
-  const result = extractReadingFromLine(line, serialPartialReading);
-  serialPartialReading = result.partial;
-
-  if (result.complete) {
-    updateReading(result.reading);
-    serialPartialReading = { ...emptyReading };
-  }
-}
-
-function extractReadingFromLine(line, partialInput = emptyReading) {
-  const partial = { ...partialInput };
-
-  if (line.startsWith("{")) {
-    try {
-      const data = JSON.parse(line);
-      const reading = {
-        pm1: Number(data.pm1_0),
-        pm25: Number(data.pm2_5),
-        pm10: Number(data.pm10)
-      };
-      if (isCompleteReading(reading)) {
-        return { complete: true, reading, partial: { ...emptyReading } };
+function chartOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: true,
+    scales: {
+      x: {
+        ticks: { color: "#9fc5dd" },
+        grid: { color: "rgba(159, 197, 221, 0.12)" }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: "#9fc5dd" },
+        grid: { color: "rgba(159, 197, 221, 0.12)" }
       }
-    } catch {
-      // Ignore malformed JSON lines.
+    },
+    plugins: {
+      legend: {
+        labels: { color: "#e8f6ff" }
+      }
     }
-  }
-
-  const pm1 = /PM\s*1\.0\s*:\s*([\d.]+)/i.exec(line);
-  const pm25 = /PM\s*2\.5\s*:\s*([\d.]+)/i.exec(line);
-  const pm10 = /PM\s*10(?:\.0)?\s*:\s*([\d.]+)/i.exec(line);
-
-  if (pm1) partial.pm1 = Number(pm1[1]);
-  if (pm25) partial.pm25 = Number(pm25[1]);
-  if (pm10) partial.pm10 = Number(pm10[1]);
-
-  if (isCompleteReading(partial)) {
-    return { complete: true, reading: { ...partial }, partial: { ...emptyReading } };
-  }
-
-  return { complete: false, reading: null, partial };
-}
-
-function isCompleteReading(reading) {
-  return Number.isFinite(reading.pm1) && Number.isFinite(reading.pm25) && Number.isFinite(reading.pm10);
-}
-
-function updateReading(reading) {
-  latestReading = { ...reading, ts: new Date().toISOString() };
-  sampleBuffer.push(latestReading);
-
-  pm1El.textContent = `${reading.pm1.toFixed(1)} ug/m3`;
-  pm25El.textContent = `${reading.pm25.toFixed(1)} ug/m3`;
-  pm10El.textContent = `${reading.pm10.toFixed(1)} ug/m3`;
-
-  const aqi = pm25ToAqi(reading.pm25);
-  aqiValueEl.textContent = aqi.aqi;
-  airCategoryEl.textContent = aqi.category;
-}
-
-function captureFiveMinuteSnapshot() {
-  if (sampleBuffer.length === 0) {
-    return;
-  }
-
-  const avgPm1 = avg(sampleBuffer.map((s) => s.pm1));
-  const avgPm25 = avg(sampleBuffer.map((s) => s.pm25));
-  const avgPm10 = avg(sampleBuffer.map((s) => s.pm10));
-  const aqi = pm25ToAqi(avgPm25);
-  const pollen = pollenSnapshot !== null ? pollenSnapshot : null;
-
-  const insight = buildInsight(aqi.category, pollen);
-  const entry = {
-    time: new Date().toLocaleString(),
-    pm1: avgPm1,
-    pm25: avgPm25,
-    pm10: avgPm10,
-    aqi: aqi.aqi,
-    pollen,
-    insight
   };
-
-  snapshotLog.unshift(entry);
-  if (snapshotLog.length > 288) {
-    snapshotLog.length = 288;
-  }
-
-  localStorage.setItem("pmPollenLog", JSON.stringify(snapshotLog));
-  sampleBuffer.length = 0;
-
-  renderTable();
-  renderChart();
 }
 
-function renderTable() {
-  logBody.innerHTML = "";
-  for (const item of snapshotLog) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${item.time}</td>
-      <td>${item.pm1.toFixed(1)}</td>
-      <td>${item.pm25.toFixed(1)}</td>
-      <td>${item.pm10.toFixed(1)}</td>
-      <td>${item.aqi}</td>
-      <td>${item.pollen === null ? "-" : item.pollen.toFixed(1)}</td>
-      <td>${item.insight}</td>
-    `;
-    logBody.appendChild(tr);
-  }
-}
-
-function renderChart() {
-  if (csvDaySeries.length > 0) {
-    chart.data.datasets[0].label = "PM2.5 (today)";
-    chart.data.datasets[1].label = "Grass Pollen";
-    chart.data.labels = csvDaySeries.map((r) => r.timeLabel);
-    chart.data.datasets[0].data = csvDaySeries.map((r) => Number(r.pm25.toFixed(1)));
-    chart.data.datasets[1].data = csvDaySeries.map(() => null);
-    chart.update();
-    return;
-  }
-
-  const recent = [...snapshotLog].slice(0, 36).reverse();
-  chart.data.datasets[0].label = "PM2.5";
-  chart.data.datasets[1].label = "Grass Pollen";
-  chart.data.labels = recent.map((r) => shortTime(r.time));
-  chart.data.datasets[0].data = recent.map((r) => Number(r.pm25.toFixed(1)));
-  chart.data.datasets[1].data = recent.map((r) => (r.pollen === null ? null : Number(r.pollen.toFixed(1))));
-  chart.update();
-}
-
-async function refreshCsvDayData() {
+async function refreshCsvData(isManual = false) {
   try {
+    setStatus("Loading CSV feed...");
     const response = await fetch(`arduino_data.csv?t=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
     const csvText = await response.text();
-    const daySeries = buildTodaySeriesFromCsv(csvText);
-    if (daySeries.length === 0) {
+    const series = buildSeriesFromCsv(csvText);
+    if (series.length === 0) {
+      setStatus("CSV loaded, but no PM rows found for today.", true);
       return;
     }
 
-    csvDaySeries = daySeries;
-    const latest = daySeries[daySeries.length - 1];
-    if (latest) {
-      updateReading({ pm1: latest.pm1, pm25: latest.pm25, pm10: latest.pm10 });
-    }
-    renderChart();
+    latestReading = series[series.length - 1];
+    updateReading(latestReading);
+    renderTrend(series);
+    renderBreakdown(latestReading);
+    renderGauge(pm25ToAqi(latestReading.pm25));
+    rebuildSnapshotLog(series);
+    renderTable();
+
+    const statusMsg = isManual ? "CSV refreshed on demand." : "CSV feed synced.";
+    setStatus(`${statusMsg} ${series.length} buckets loaded.`);
   } catch (err) {
-    console.warn(`CSV refresh skipped: ${err.message}`);
+    setStatus(`CSV refresh failed: ${err.message}`, true);
   }
 }
 
-function buildTodaySeriesFromCsv(csvText) {
+function buildSeriesFromCsv(csvText) {
   const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length <= 1) {
     return [];
@@ -307,16 +186,16 @@ function buildTodaySeriesFromCsv(csvText) {
       continue;
     }
 
-    const parsed = extractReadingFromLine(row.raw, emptyReading);
-    if (!parsed.complete) {
+    const reading = parsePmReadingLine(row.raw);
+    if (!reading) {
       continue;
     }
 
     const bucketTs = floorToFiveMinutes(ts.getTime());
     const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0 };
-    current.pm1 += parsed.reading.pm1;
-    current.pm25 += parsed.reading.pm25;
-    current.pm10 += parsed.reading.pm10;
+    current.pm1 += reading.pm1;
+    current.pm25 += reading.pm25;
+    current.pm10 += reading.pm10;
     current.count += 1;
     buckets.set(bucketTs, current);
   }
@@ -326,10 +205,27 @@ function buildTodaySeriesFromCsv(csvText) {
     .map(([bucketTs, value]) => ({
       ts: bucketTs,
       timeLabel: new Date(bucketTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timeDisplay: new Date(bucketTs).toLocaleString(),
       pm1: value.pm1 / value.count,
       pm25: value.pm25 / value.count,
       pm10: value.pm10 / value.count
     }));
+}
+
+function parsePmReadingLine(line) {
+  const pm1 = /PM\s*1\.0\s*:\s*([\d.]+)/i.exec(line);
+  const pm25 = /PM\s*2\.5\s*:\s*([\d.]+)/i.exec(line);
+  const pm10 = /PM\s*10(?:\.0)?\s*:\s*([\d.]+)/i.exec(line);
+
+  if (!pm1 || !pm25 || !pm10) {
+    return null;
+  }
+
+  return {
+    pm1: Number(pm1[1]),
+    pm25: Number(pm25[1]),
+    pm10: Number(pm10[1])
+  };
 }
 
 function parseCsvTimestampRawLine(line) {
@@ -340,6 +236,7 @@ function parseCsvTimestampRawLine(line) {
 
   const timestamp = line.slice(0, commaIdx).trim();
   let raw = line.slice(commaIdx + 1).trim();
+
   if (raw.startsWith('"') && raw.endsWith('"')) {
     raw = raw.slice(1, -1).replace(/""/g, '"');
   }
@@ -347,21 +244,81 @@ function parseCsvTimestampRawLine(line) {
   return { timestamp, raw };
 }
 
-function isSameLocalDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+function renderTrend(series) {
+  trendChart.data.labels = series.map((row) => row.timeLabel);
+  trendChart.data.datasets[0].data = series.map((row) => Number(row.pm25.toFixed(1)));
+  trendChart.data.datasets[1].data = series.map(() => (pollenSnapshot === null ? null : Number(pollenSnapshot.toFixed(1))));
+  trendChart.update();
 }
 
-function floorToFiveMinutes(tsMs) {
-  const fiveMinutesMs = 5 * 60 * 1000;
-  return Math.floor(tsMs / fiveMinutesMs) * fiveMinutesMs;
+function renderBreakdown(reading) {
+  pmBreakdownChart.data.datasets[0].data = [
+    Number(reading.pm1.toFixed(1)),
+    Number(reading.pm25.toFixed(1)),
+    Number(reading.pm10.toFixed(1))
+  ];
+  pmBreakdownChart.update();
 }
 
-function shortTime(text) {
-  const dt = new Date(text);
-  if (Number.isNaN(dt.getTime())) {
-    return text;
+function renderGauge(aqi) {
+  const bounded = Math.max(0, Math.min(500, aqi.aqi));
+  aqiGaugeChart.data.datasets[0].data = [bounded, 500 - bounded];
+  aqiGaugeChart.data.datasets[0].backgroundColor[0] = categoryColor(aqi.category);
+  aqiGaugeChart.update();
+  aqiGaugeLabelEl.textContent = `AQI: ${aqi.aqi} (${aqi.category})`;
+}
+
+function categoryColor(category) {
+  if (category === "Good") return "#2ec4b6";
+  if (category === "Moderate") return "#ffcf56";
+  if (category === "Unhealthy for Sensitive Groups") return "#ff9f1c";
+  if (category === "Unhealthy") return "#ff6b6b";
+  if (category === "Very Unhealthy") return "#b86bff";
+  return "#8b0000";
+}
+
+function rebuildSnapshotLog(series) {
+  snapshotLog = [...series]
+    .reverse()
+    .map((item) => {
+      const aqi = pm25ToAqi(item.pm25);
+      return {
+        time: item.timeDisplay,
+        pm1: item.pm1,
+        pm25: item.pm25,
+        pm10: item.pm10,
+        aqi: aqi.aqi,
+        pollen: pollenSnapshot,
+        insight: buildInsight(aqi.category, pollenSnapshot)
+      };
+    });
+}
+
+function renderTable() {
+  logBody.innerHTML = "";
+  for (const item of snapshotLog) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${item.time}</td>
+      <td>${item.pm1.toFixed(1)}</td>
+      <td>${item.pm25.toFixed(1)}</td>
+      <td>${item.pm10.toFixed(1)}</td>
+      <td>${item.aqi}</td>
+      <td>${item.pollen === null ? "-" : item.pollen.toFixed(1)}</td>
+      <td>${item.insight}</td>
+    `;
+    logBody.appendChild(tr);
   }
-  return dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function updateReading(reading) {
+  pm1El.textContent = `${reading.pm1.toFixed(1)} ug/m3`;
+  pm25El.textContent = `${reading.pm25.toFixed(1)} ug/m3`;
+  pm10El.textContent = `${reading.pm10.toFixed(1)} ug/m3`;
+
+  const aqi = pm25ToAqi(reading.pm25);
+  aqiValueEl.textContent = aqi.aqi;
+  airCategoryEl.textContent = aqi.category;
 }
 
 async function requestLocation() {
@@ -378,6 +335,7 @@ async function requestLocation() {
       };
       setStatus("Location locked. Fetching pollen data...");
       await updatePollen();
+      await refreshCsvData();
     },
     (err) => setStatus(`Location failed: ${err.message}`, true),
     { enableHighAccuracy: true, timeout: 10000 }
@@ -410,6 +368,7 @@ async function updatePollen() {
       if (!Number.isFinite(Number(grassPollen[i]))) {
         continue;
       }
+
       const gap = Math.abs(new Date(time[i]).getTime() - now);
       if (gap < bestGap) {
         bestGap = gap;
@@ -423,7 +382,6 @@ async function updatePollen() {
 
     pollenSnapshot = Number(grassPollen[bestIdx]);
     pollenValueEl.textContent = Number.isFinite(pollenSnapshot) ? pollenSnapshot.toFixed(1) : "-";
-    setStatus("Pollen data updated.");
   } catch (err) {
     setStatus(`Pollen fetch error: ${err.message}`, true);
   }
@@ -464,14 +422,16 @@ function pm25ToAqi(pm25) {
   return { aqi, category: band.category };
 }
 
-function avg(values) {
-  if (!values.length) {
-    return 0;
-  }
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
+function isSameLocalDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function floorToFiveMinutes(tsMs) {
+  const fiveMinutesMs = 5 * 60 * 1000;
+  return Math.floor(tsMs / fiveMinutesMs) * fiveMinutesMs;
 }
 
 function setStatus(message, isError = false) {
   statusText.textContent = `Status: ${message}`;
-  statusText.style.color = isError ? "#ff7b72" : "#9ac2b5";
+  statusText.style.color = isError ? "#ff6b6b" : "#9fc5dd";
 }

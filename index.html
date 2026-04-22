@@ -3,54 +3,70 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Air + Pollen Live Monitor</title>
+  <title>Air + Pollen Command Deck</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="bg-glow bg-glow-1"></div>
-  <div class="bg-glow bg-glow-2"></div>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+  <div class="bg-grid"></div>
 
   <main class="page">
-    <header class="hero">
-      <p class="eyebrow">LIVE AIR TRACKER</p>
-      <h1>PM Sensor + Pollen Insight</h1>
-      <p class="subtitle">Connect your Arduino in the browser to stream real PM readings live, build 5-minute snapshots, and relate air quality to local pollen levels.</p>
-    </header>
-
-    <section class="card controls">
-      <button id="connectBtn" class="btn btn-primary">Connect Arduino</button>
-      <button id="locationBtn" class="btn btn-secondary">Use My Location</button>
-      <p id="statusText" class="status">Status: Waiting to connect...</p>
-      <p class="help-text">Use Chrome or Edge on desktop, plug in the Arduino, then click Connect Arduino. The page reads the serial stream directly from the board.</p>
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">HOME ENVIRONMENT COMMAND DECK</p>
+        <h1>CSV-Powered Air Quality Dashboard</h1>
+        <p class="subtitle">Reads arduino_data.csv every 5 minutes, turns it into day-long PM trends, and layers pollen context on top.</p>
+      </div>
+      <div class="hero-pillars">
+        <article class="pillar">
+          <span class="pillar-label">Feed Mode</span>
+          <strong>CSV Pipeline</strong>
+        </article>
+        <article class="pillar">
+          <span class="pillar-label">Interval</span>
+          <strong>5 min</strong>
+        </article>
+        <article class="pillar">
+          <span class="pillar-label">Window</span>
+          <strong>Today</strong>
+        </article>
+      </div>
     </section>
 
-    <section class="grid">
-      <article class="card metric-card">
+    <section class="layout-grid">
+      <section class="card controls-panel">
+        <h2>Data Controls</h2>
+        <p class="help-text">Use this panel to refresh the CSV feed and add local pollen context.</p>
+        <div class="control-actions">
+          <button id="refreshCsvBtn" class="btn btn-primary">Refresh CSV Now</button>
+          <button id="locationBtn" class="btn btn-secondary">Use My Location</button>
+        </div>
+        <p id="statusText" class="status">Status: Waiting for CSV refresh...</p>
+      </section>
+
+      <section class="card metric-panel">
         <h2>Latest Sensor Reading</h2>
         <div class="metrics">
-          <div>
+          <article>
             <p class="metric-label">PM1.0</p>
             <p id="pm1" class="metric-value">-</p>
-          </div>
-          <div>
+          </article>
+          <article>
             <p class="metric-label">PM2.5</p>
             <p id="pm25" class="metric-value">-</p>
-          </div>
-          <div>
+          </article>
+          <article>
             <p class="metric-label">PM10</p>
             <p id="pm10" class="metric-value">-</p>
-          </div>
+          </article>
         </div>
-      </article>
-
-      <article class="card metric-card">
-        <h2>Current Air + Pollen Context</h2>
-        <div class="metrics">
+        <div class="context-strip">
           <div>
-            <p class="metric-label">AQI (PM2.5 based)</p>
+            <p class="metric-label">AQI</p>
             <p id="aqiValue" class="metric-value">-</p>
           </div>
           <div>
@@ -62,16 +78,31 @@
             <p id="pollenValue" class="metric-value">-</p>
           </div>
         </div>
+      </section>
+    </section>
+
+    <section class="chart-grid">
+      <article class="card chart-large">
+        <h2>Whole-Day PM2.5 + Pollen Trend</h2>
+        <canvas id="trendChart" height="130"></canvas>
+      </article>
+
+      <article class="card chart-small">
+        <h2>Latest PM Profile</h2>
+        <canvas id="pmBreakdownChart" height="175"></canvas>
+      </article>
+
+      <article class="card chart-small">
+        <h2>AQI Gauge</h2>
+        <div class="gauge-wrap">
+          <canvas id="aqiGaugeChart" height="175"></canvas>
+          <p id="aqiGaugeLabel" class="gauge-label">AQI: -</p>
+        </div>
       </article>
     </section>
 
     <section class="card">
-      <h2>Today Trend (5-Minute Avg from CSV)</h2>
-      <canvas id="trendChart" height="120"></canvas>
-    </section>
-
-    <section class="card">
-      <h2>Snapshot Log (Every 5 Minutes)</h2>
+      <h2>Snapshot Log (Today, 5-Minute Buckets)</h2>
       <div class="table-wrap">
         <table>
           <thead>
