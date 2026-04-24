@@ -50,7 +50,7 @@ boolean readPMS(Stream *s) {
   return true;
 }
 
-/* Initialising the serial & pms serial with a 9600 baud rate */
+/* Initialising the serial & pms serial with a 115 200 baud rate */
 void setup() {
   Serial.begin(9600);
   pms.begin(9600);
@@ -58,20 +58,34 @@ void setup() {
   
 /* Gathering & displaying the sensor data */
 void loop() {
+  unsigned long seconds = 1000L; //Notice the L
+  unsigned long minutes = seconds * 60;
   // Checking if the data was successfully read
   if (readPMS(&pms)) {
     Serial.println("-----------------------------------------");
-    Serial.print("Particles > 0.3um:"); 
+    Serial.println("CONCENTRATION UNITS (STANDARD)");
+    Serial.println("PM 1.0: "+ data.pm10);
+    Serial.println("PM 2.5: "+ data.pm25);
+    Serial.println("PM  10: "+ data.pm100);
+    Serial.println("CONCENTRATION UNITS (ENVIRONMENTAL)");
+    Serial.println("PM 1.0: "+ data.pm10_env);
+    Serial.println("PM 2.5: "+ data.pm25_env);
+    Serial.println("PM  10: "+ data.pm100_env);
+    Serial.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+    Serial.print("Particles > 0.3um / 0.1L air:"); 
     Serial.println(data.p_03um);
-    Serial.print("Particles > 0.5um:"); 
+    Serial.print("Particles > 0.5um / 0.1L air:"); 
     Serial.println(data.p_05um);
-    Serial.print("Particles > 1.0um:"); 
+    Serial.print("Particles > 1.0um / 0.1L air:"); 
     Serial.println(data.p_10um);
-    Serial.print("Particles > 2.5um:"); 
+    Serial.print("Particles > 2.5um / 0.1L air:"); 
     Serial.println(data.p_25um);
-    Serial.print("Particles > 5.0um:"); 
+    Serial.print("Particles > 5.0um / 0.1L air:"); 
     Serial.println(data.p_50um);
     Serial.print("Particles > 10.0 um:"); 
     Serial.println(data.p_100um);
+    
+    delay(minutes); //for 60,000 milliseconds
   }
+  
 }

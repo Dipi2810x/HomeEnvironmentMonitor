@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 SERIAL_PORT = "COM3"
-BAUD_RATE = 115200
+BAUD_RATE = 9600
 GIT_SYNC_INTERVAL_SECONDS = 300
 
 try:
