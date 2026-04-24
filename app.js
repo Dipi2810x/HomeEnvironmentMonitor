@@ -162,7 +162,7 @@ async function refreshCsvData(isManual = false) {
     // Show the most recent timestamp found in the CSV
     const lastTs = getLatestCsvTimestamp(csvText);
     if (lastTs) {
-      const d = new Date(lastTs);
+      const d = parseLocalIso(lastTs);
       if (!Number.isNaN(d.getTime())) {
         lastCollectedEl.textContent = d.toLocaleString();
       } else {
@@ -207,7 +207,7 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
     const row = parseCsvTimestampRawLine(lines[i]);
     if (!row) continue;
 
-    const ts = new Date(row.timestamp);
+    const ts = parseLocalIso(row.timestamp);
     if (Number.isNaN(ts.getTime())) continue;
     if (!includeAll && !isSameLocalDay(ts, now)) continue;
 
@@ -235,7 +235,7 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
   }
 
   for (const r of readings) {
-    const ts = new Date(r.timestamp);
+    const ts = parseLocalIso(r.timestamp);
     const bucketTs = floorToFiveMinutes(ts.getTime());
     const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0 };
     current.pm1 += r.pm1;
@@ -255,6 +255,21 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
       pm25: value.pm25 / value.count,
       pm10: value.pm10 / value.count
     }));
+}
+
+// Parse an ISO-like timestamp (YYYY-MM-DDTHH:MM:SS) as local time to avoid
+// cross-origin/browser differences in Date parsing when served from GitHub Pages.
+function parseLocalIso(ts) {
+  if (!ts || typeof ts !== "string") return new Date(NaN);
+  const m = /^\s*(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\s*$/.exec(ts);
+  if (!m) return new Date(ts);
+  const year = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6]);
+  return new Date(year, month, day, hour, minute, second);
 }
 
 function parsePmReadingLine(line) {
