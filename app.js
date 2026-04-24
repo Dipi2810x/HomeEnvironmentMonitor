@@ -9,6 +9,12 @@ const airCategoryEl = document.getElementById("airCategory");
 const pollenValueEl = document.getElementById("pollenValue");
 const aqiGaugeLabelEl = document.getElementById("aqiGaugeLabel");
 const logBody = document.getElementById("logBody");
+const particles03El = document.getElementById("particles03");
+const particles05El = document.getElementById("particles05");
+const particles10smallEl = document.getElementById("particles10small");
+const particles25El = document.getElementById("particles25");
+const particles50El = document.getElementById("particles50");
+const particles100El = document.getElementById("particles100");
 
 let pollenSnapshot = null;
 let userCoords = null;
@@ -145,6 +151,9 @@ async function refreshCsvData(isManual = false) {
     }
 
     const csvText = await response.text();
+      // Extract particle counts (from sensors like PMS) and update dashboard
+      const particleCounts = parseParticleCountsFromCsv(csvText);
+      updateParticleCountsDisplay(particleCounts);
     const series = buildSeriesFromCsv(csvText);
     if (series.length === 0) {
       setStatus("CSV loaded, but no PM rows found for today.", true);
@@ -242,6 +251,38 @@ function parseCsvTimestampRawLine(line) {
   }
 
   return { timestamp, raw };
+}
+
+function parseParticleCountsFromCsv(csvText) {
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const counts = { "0.3": null, "0.5": null, "1.0": null, "2.5": null, "5.0": null, "10.0": null };
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = parseCsvTimestampRawLine(lines[i]);
+    if (!row || !/Particles/i.test(row.raw)) continue;
+
+    // Match patterns like: "Particles > 0.3um / 0.1L air:524" or "Particles > 10.0 um / 0.1L air:0"
+    const re = /Particles\s*>\s*([\d.]+)\s*um\b[^\d-]*?(\d+)/ig;
+    let m;
+    while ((m = re.exec(row.raw)) !== null) {
+      const size = Number(m[1]).toFixed(1);
+      const val = Number(m[2]);
+      if (Object.prototype.hasOwnProperty.call(counts, size)) {
+        counts[size] = val;
+      }
+    }
+  }
+
+  return counts;
+}
+
+function updateParticleCountsDisplay(counts) {
+  particles03El.textContent = counts["0.3"] === null ? "-" : `${counts["0.3"]} / 0.1L`;
+  particles05El.textContent = counts["0.5"] === null ? "-" : `${counts["0.5"]} / 0.1L`;
+  particles10smallEl.textContent = counts["1.0"] === null ? "-" : `${counts["1.0"]} / 0.1L`;
+  particles25El.textContent = counts["2.5"] === null ? "-" : `${counts["2.5"]} / 0.1L`;
+  particles50El.textContent = counts["5.0"] === null ? "-" : `${counts["5.0"]} / 0.1L`;
+  particles100El.textContent = counts["10.0"] === null ? "-" : `${counts["10.0"]} / 0.1L`;
 }
 
 function renderTrend(series) {

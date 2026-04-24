@@ -25,6 +25,11 @@ body {
   overflow-x: hidden;
 }
 
+html {
+  height: 100%;
+  overflow-x: hidden;
+}
+
 .bg-shape {
   position: fixed;
   pointer-events: none;
@@ -63,10 +68,40 @@ body {
 .page {
   position: relative;
   z-index: 1;
-  width: min(1200px, 94vw);
-  margin: 26px auto 56px;
+  max-width: 1200px;
+  width: calc(100% - 48px);
+  margin: 12px auto 12px;
   display: grid;
-  gap: 16px;
+  gap: 12px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding-bottom: 16px;
+}
+
+/* Prevent any child element from forcing horizontal scroll
+   and ensure canvases/tables scale inside their containers. */
+body,
+.page,
+main,
+table,
+canvas {
+  max-width: 100%;
+}
+
+canvas {
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+
+table {
+  table-layout: fixed;
+  word-break: break-word;
+}
+
+th,
+td {
+  white-space: normal;
 }
 
 .card {
@@ -230,7 +265,7 @@ h2 {
 
 .chart-large,
 .chart-small {
-  min-height: 280px;
+  min-height: 240px;
 }
 
 .gauge-wrap {
@@ -251,7 +286,6 @@ h2 {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
 }
 
 th,
@@ -289,5 +323,16 @@ th {
   .metrics,
   .context-strip {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 700px) {
+  .chart-large,
+  .chart-small {
+    min-height: 160px;
+  }
+  .page {
+    gap: 8px;
+    padding-bottom: 8px;
   }
 }
