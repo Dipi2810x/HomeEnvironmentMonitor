@@ -15,6 +15,7 @@ const particles10smallEl = document.getElementById("particles10small");
 const particles25El = document.getElementById("particles25");
 const particles50El = document.getElementById("particles50");
 const particles100El = document.getElementById("particles100");
+const lastCollectedEl = document.getElementById("lastCollected");
 
 let pollenSnapshot = null;
 let userCoords = null;
@@ -151,10 +152,25 @@ async function refreshCsvData(isManual = false) {
     }
 
     const csvText = await response.text();
-      // Extract particle counts (from sensors like PMS) and update dashboard
-      const particleCounts = parseParticleCountsFromCsv(csvText);
-      updateParticleCountsDisplay(particleCounts);
-    const series = buildSeriesFromCsv(csvText);
+    // Extract particle counts (from sensors like PMS) and update dashboard
+    const particleCounts = parseParticleCountsFromCsv(csvText);
+    updateParticleCountsDisplay(particleCounts);
+
+    // If user requested a manual refresh, include all rows from the CSV (not just today)
+    const series = buildSeriesFromCsv(csvText, Boolean(isManual));
+
+    // Show the most recent timestamp found in the CSV
+    const lastTs = getLatestCsvTimestamp(csvText);
+    if (lastTs) {
+      const d = new Date(lastTs);
+      if (!Number.isNaN(d.getTime())) {
+        lastCollectedEl.textContent = d.toLocaleString();
+      } else {
+        lastCollectedEl.textContent = lastTs;
+      }
+    } else {
+      lastCollectedEl.textContent = "-";
+    }
     if (series.length === 0) {
       setStatus("CSV loaded, but no PM rows found for today.", true);
       return;
@@ -175,7 +191,7 @@ async function refreshCsvData(isManual = false) {
   }
 }
 
-function buildSeriesFromCsv(csvText) {
+function buildSeriesFromCsv(csvText, includeAll = false) {
   const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length <= 1) {
     return [];
@@ -192,7 +208,8 @@ function buildSeriesFromCsv(csvText) {
     if (!row) continue;
 
     const ts = new Date(row.timestamp);
-    if (Number.isNaN(ts.getTime()) || !isSameLocalDay(ts, now)) continue;
+    if (Number.isNaN(ts.getTime())) continue;
+    if (!includeAll && !isSameLocalDay(ts, now)) continue;
 
     const key = row.timestamp; // use the exact timestamp string as grouping key
     if (!partial.has(key)) {
@@ -302,6 +319,18 @@ function updateParticleCountsDisplay(counts) {
   particles25El.textContent = counts["2.5"] === null ? "-" : `${counts["2.5"]} / 0.1L`;
   particles50El.textContent = counts["5.0"] === null ? "-" : `${counts["5.0"]} / 0.1L`;
   particles100El.textContent = counts["10.0"] === null ? "-" : `${counts["10.0"]} / 0.1L`;
+}
+
+function getLatestCsvTimestamp(csvText) {
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  // Walk backward to find the last line with a valid timestamp at start
+  for (let i = lines.length - 1; i >= 1; i -= 1) {
+    const row = parseCsvTimestampRawLine(lines[i]);
+    if (!row) continue;
+    // Return the raw timestamp string (ISO) - caller will parse/format
+    return row.timestamp;
+  }
+  return null;
 }
 
 function renderTrend(series) {
