@@ -5,7 +5,7 @@ https://dipi2810x.github.io/HomeEnvironmentMonitor/
 
 Run the local logger:
 
-c:/Users/ramju/OneDrive/Documents/HomeEnvironmentMonitor/.venv/Scripts/python.exe reading_serial_data.py
+python3 reading_serial_data.py
 
 The serial logger is hardcoded to COM3 at 115200 baud.
 
