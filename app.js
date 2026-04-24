@@ -184,27 +184,46 @@ function buildSeriesFromCsv(csvText) {
   const now = new Date();
   const buckets = new Map();
 
+  // The sensor may emit PM readings as separate lines per timestamp (PM 1.0, PM 2.5, PM 10).
+  // First, assemble per-timestamp partial readings, averaging duplicates, then bucket them.
+  const partial = new Map();
   for (let i = 1; i < lines.length; i += 1) {
     const row = parseCsvTimestampRawLine(lines[i]);
-    if (!row) {
-      continue;
-    }
+    if (!row) continue;
 
     const ts = new Date(row.timestamp);
-    if (Number.isNaN(ts.getTime()) || !isSameLocalDay(ts, now)) {
-      continue;
+    if (Number.isNaN(ts.getTime()) || !isSameLocalDay(ts, now)) continue;
+
+    const key = row.timestamp; // use the exact timestamp string as grouping key
+    if (!partial.has(key)) {
+      partial.set(key, { pm1: [], pm25: [], pm10: [] });
     }
 
-    const reading = parsePmReadingLine(row.raw);
-    if (!reading) {
-      continue;
-    }
+    const p = partial.get(key);
 
+    const m1 = /PM\s*1\.0\s*:\s*([\d.]+)/i.exec(row.raw);
+    const m25 = /PM\s*2\.5\s*:\s*([\d.]+)/i.exec(row.raw);
+    const m10 = /PM\s*10(?:\.0)?\s*:\s*([\d.]+)/i.exec(row.raw);
+
+    if (m1) p.pm1.push(Number(m1[1]));
+    if (m25) p.pm25.push(Number(m25[1]));
+    if (m10) p.pm10.push(Number(m10[1]));
+  }
+
+  const readings = [];
+  for (const [tsStr, vals] of partial.entries()) {
+    if (vals.pm1.length === 0 || vals.pm25.length === 0 || vals.pm10.length === 0) continue;
+    const avg = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+    readings.push({ timestamp: tsStr, pm1: avg(vals.pm1), pm25: avg(vals.pm25), pm10: avg(vals.pm10) });
+  }
+
+  for (const r of readings) {
+    const ts = new Date(r.timestamp);
     const bucketTs = floorToFiveMinutes(ts.getTime());
     const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0 };
-    current.pm1 += reading.pm1;
-    current.pm25 += reading.pm25;
-    current.pm10 += reading.pm10;
+    current.pm1 += r.pm1;
+    current.pm25 += r.pm25;
+    current.pm10 += r.pm10;
     current.count += 1;
     buckets.set(bucketTs, current);
   }

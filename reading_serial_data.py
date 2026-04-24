@@ -127,14 +127,19 @@ def main() -> int:
     csv_path = Path(args.output)
     repo_path = Path(__file__).resolve().parent
 
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-    except serial.SerialException as exc:
-        print(f"Could not open serial port {SERIAL_PORT}: {exc}")
-        return 1
-
-    print(f"Connected to {SERIAL_PORT} @ {BAUD_RATE} baud")
-    time.sleep(2)
+    # Try to open serial port and keep attempting if it fails; allow long-running operation.
+    ser = None
+    open_attempts = 0
+    while ser is None:
+        try:
+            ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+            print(f"Connected to {SERIAL_PORT} @ {BAUD_RATE} baud")
+            time.sleep(2)
+        except serial.SerialException as exc:
+            open_attempts += 1
+            wait = min(30, 1 + open_attempts * 2)
+            print(f"Could not open serial port {SERIAL_PORT}: {exc}. Retrying in {wait}s...")
+            time.sleep(wait)
 
     active_day = date.today()
     reset_file = not is_csv_for_today(csv_path)
@@ -159,12 +164,39 @@ def main() -> int:
                 active_day = now.date()
                 print("New day detected. CSV reset for fresh daily capture.")
 
-            line = ser.readline().decode("utf-8", errors="replace").strip()
-            if should_keep_line(line):
-                ts = now.isoformat(timespec="seconds")
-                print(line)
-                writer.writerow([ts, line])
-                file.flush()
+            try:
+                raw = ser.readline()
+                if not raw:
+                    # timeout expired without data
+                    pass
+                else:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if should_keep_line(line):
+                        ts = now.isoformat(timespec="seconds")
+                        print(line)
+                        writer.writerow([ts, line])
+                        file.flush()
+            except serial.SerialException as exc:
+                # Attempt to recover the serial connection without exiting.
+                print(f"Serial error: {exc}. Attempting to reconnect...")
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+                # Try to re-open with incremental backoff.
+                reconnect_attempts = 0
+                ser = None
+                while ser is None:
+                    try:
+                        reconnect_attempts += 1
+                        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+                        print(f"Reconnected to {SERIAL_PORT} after {reconnect_attempts} attempt(s)")
+                        time.sleep(1)
+                    except serial.SerialException as exc2:
+                        wait = min(30, 1 + reconnect_attempts * 2)
+                        print(f"Reconnect failed: {exc2}. Retrying in {wait}s...")
+                        time.sleep(wait)
 
             if time.time() >= next_git_sync:
                 sync_csv_to_git(repo_path, csv_path)
