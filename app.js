@@ -248,7 +248,8 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
     if (m10) p.pm10.push(Number(m10[1]));
 
     // Particle size counts (per 0.1L) - collect into sizes map
-    const re = /Particles\s*>\s*([\d.]+)\s*um\b[^\d-]*?(\d+)/ig;
+    // Match the size then find the numeric count after the final ':' (avoids matching the '0.1' in '/ 0.1L air')
+    const re = /Particles\s*>\s*([\d.]+)\s*um[^:]*:\s*([0-9]+)/ig;
     let m;
     while ((m = re.exec(row.raw)) !== null) {
       const size = Number(m[1]).toFixed(1);
@@ -367,7 +368,8 @@ function parseParticleCountsFromCsv(csvText) {
     if (!row || !/Particles/i.test(row.raw)) continue;
 
     // Match patterns like: "Particles > 0.3um / 0.1L air:524" or "Particles > 10.0 um / 0.1L air:0"
-    const re = /Particles\s*>\s*([\d.]+)\s*um\b[^\d-]*?(\d+)/ig;
+    // Use a regex that captures the number after the ':' so we don't accidentally grab the '0' in '0.1L'.
+    const re = /Particles\s*>\s*([\d.]+)\s*um[^:]*:\s*([0-9]+)/ig;
     let m;
     while ((m = re.exec(row.raw)) !== null) {
       const size = Number(m[1]).toFixed(1);
