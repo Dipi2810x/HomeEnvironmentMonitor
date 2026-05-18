@@ -50,6 +50,10 @@
           <p class="metric-label">Data Last Collected</p>
           <p id="lastCollected" class="metric-value small">-</p>
         </div>
+        <div style="margin-top:12px">
+          <p class="metric-label">Debug: Last parsed particle counts</p>
+          <pre id="debugCounts" style="font-size:12px;white-space:pre-wrap;color:#cfe9ff;background:#012; padding:8px;border-radius:6px;">-</pre>
+        </div>
       </section>
 
       <section class="card metric-panel">
@@ -83,7 +87,7 @@
           </div>
         </div>
         <div class="particle-strip">
-          <h3 class="small-heading">Particle Counts (per 0.1L)</h3>
+          <h3 class="small-heading">Particle Counts (per 1.0L)</h3>
           <div class="metrics">
             <article>
               <p class="metric-label">>0.3 µm</p>
@@ -131,6 +135,11 @@
           <canvas id="aqiGaugeChart" height="175"></canvas>
           <p id="aqiGaugeLabel" class="gauge-label">AQI: -</p>
         </div>
+      </article>
+
+      <article class="card chart-large">
+        <h2>Particle counts by size (per 1.0L)</h2>
+        <canvas id="particleSizesChart" height="130"></canvas>
       </article>
     </section>
 

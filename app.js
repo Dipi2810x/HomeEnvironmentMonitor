@@ -50,6 +50,22 @@ const trendChart = new Chart(document.getElementById("trendChart"), {
   options: chartOptions()
 });
 
+const particleSizesChart = new Chart(document.getElementById("particleSizesChart"), {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [
+      { label: ">0.3 µm", data: [], borderColor: "#7f8cff", tension: 0.2 },
+      { label: ">0.5 µm", data: [], borderColor: "#5fa8ff", tension: 0.2 },
+      { label: ">1.0 µm", data: [], borderColor: "#2ec4b6", tension: 0.2 },
+      { label: ">2.5 µm", data: [], borderColor: "#ff9f1c", tension: 0.2 },
+      { label: ">5.0 µm", data: [], borderColor: "#ff6b6b", tension: 0.2 },
+      { label: ">10.0 µm", data: [], borderColor: "#b86bff", tension: 0.2 }
+    ]
+  },
+  options: chartOptions()
+});
+
 const pmBreakdownChart = new Chart(document.getElementById("pmBreakdownChart"), {
   type: "bar",
   data: {
@@ -154,6 +170,10 @@ async function refreshCsvData(isManual = false) {
     const csvText = await response.text();
     // Extract particle counts (from sensors like PMS) and update dashboard
     const particleCounts = parseParticleCountsFromCsv(csvText);
+    // Debug: log and display parsed counts for troubleshooting
+    console.debug("Parsed particleCounts:", particleCounts);
+    const debugEl = document.getElementById("debugCounts");
+    if (debugEl) debugEl.textContent = JSON.stringify(particleCounts, null, 2);
     updateParticleCountsDisplay(particleCounts);
 
     // If user requested a manual refresh, include all rows from the CSV (not just today)
@@ -180,6 +200,7 @@ async function refreshCsvData(isManual = false) {
     updateReading(latestReading);
     renderTrend(series);
     renderBreakdown(latestReading);
+    renderParticleSizes(series);
     renderGauge(pm25ToAqi(latestReading.pm25));
     rebuildSnapshotLog(series);
     renderTable();
@@ -213,7 +234,7 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
 
     const key = row.timestamp; // use the exact timestamp string as grouping key
     if (!partial.has(key)) {
-      partial.set(key, { pm1: [], pm25: [], pm10: [] });
+      partial.set(key, { pm1: [], pm25: [], pm10: [], sizes: {} });
     }
 
     const p = partial.get(key);
@@ -225,36 +246,69 @@ function buildSeriesFromCsv(csvText, includeAll = false) {
     if (m1) p.pm1.push(Number(m1[1]));
     if (m25) p.pm25.push(Number(m25[1]));
     if (m10) p.pm10.push(Number(m10[1]));
-  }
 
+    // Particle size counts (per 0.1L) - collect into sizes map
+    const re = /Particles\s*>\s*([\d.]+)\s*um\b[^\d-]*?(\d+)/ig;
+    let m;
+    while ((m = re.exec(row.raw)) !== null) {
+      const size = Number(m[1]).toFixed(1);
+      const val = Number(m[2]);
+      p.sizes[size] = p.sizes[size] || [];
+      p.sizes[size].push(val);
+    }
+  }
   const readings = [];
   for (const [tsStr, vals] of partial.entries()) {
     if (vals.pm1.length === 0 || vals.pm25.length === 0 || vals.pm10.length === 0) continue;
     const avg = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
-    readings.push({ timestamp: tsStr, pm1: avg(vals.pm1), pm25: avg(vals.pm25), pm10: avg(vals.pm10) });
+    const sizesAvg = {};
+    for (const size of Object.keys(vals.sizes)) {
+      const arr = vals.sizes[size];
+      if (arr && arr.length) sizesAvg[size] = avg(arr);
+    }
+    readings.push({ timestamp: tsStr, pm1: avg(vals.pm1), pm25: avg(vals.pm25), pm10: avg(vals.pm10), sizes: sizesAvg });
   }
 
   for (const r of readings) {
     const ts = parseLocalIso(r.timestamp);
     const bucketTs = floorToFiveMinutes(ts.getTime());
-    const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0 };
+    const current = buckets.get(bucketTs) || { pm1: 0, pm25: 0, pm10: 0, count: 0, sizes: {} };
     current.pm1 += r.pm1;
     current.pm25 += r.pm25;
     current.pm10 += r.pm10;
+    // accumulate sizes
+    for (const [size, val] of Object.entries(r.sizes || {})) {
+      current.sizes[size] = current.sizes[size] || { sum: 0, count: 0 };
+      current.sizes[size].sum += val;
+      current.sizes[size].count += 1;
+    }
     current.count += 1;
     buckets.set(bucketTs, current);
   }
 
   return [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([bucketTs, value]) => ({
-      ts: bucketTs,
-      timeLabel: new Date(bucketTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      timeDisplay: new Date(bucketTs).toLocaleString(),
-      pm1: value.pm1 / value.count,
-      pm25: value.pm25 / value.count,
-      pm10: value.pm10 / value.count
-    }));
+    .map(([bucketTs, value]) => {
+      const obj = {
+        ts: bucketTs,
+        timeLabel: new Date(bucketTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timeDisplay: new Date(bucketTs).toLocaleString(),
+        pm1: value.pm1 / value.count,
+        pm25: value.pm25 / value.count,
+        pm10: value.pm10 / value.count
+      };
+      // compute averaged sizes and scale from per 0.1L to per 1.0L
+      const sizes = ["0.3", "0.5", "1.0", "2.5", "5.0", "10.0"];
+      for (const s of sizes) {
+        if (value.sizes[s] && value.sizes[s].count > 0) {
+          const avgVal = value.sizes[s].sum / value.sizes[s].count;
+          obj[`cnt_${s.replace(".", "_")}`] = Math.round(avgVal * 10); // scale to per 1.0L
+        } else {
+          obj[`cnt_${s.replace(".", "_")}`] = 0;
+        }
+      }
+      return obj;
+    });
 }
 
 // Parse an ISO-like timestamp (YYYY-MM-DDTHH:MM:SS) as local time to avoid
@@ -328,12 +382,24 @@ function parseParticleCountsFromCsv(csvText) {
 }
 
 function updateParticleCountsDisplay(counts) {
-  particles03El.textContent = counts["0.3"] === null ? "-" : `${counts["0.3"]} / 0.1L`;
-  particles05El.textContent = counts["0.5"] === null ? "-" : `${counts["0.5"]} / 0.1L`;
-  particles10smallEl.textContent = counts["1.0"] === null ? "-" : `${counts["1.0"]} / 0.1L`;
-  particles25El.textContent = counts["2.5"] === null ? "-" : `${counts["2.5"]} / 0.1L`;
-  particles50El.textContent = counts["5.0"] === null ? "-" : `${counts["5.0"]} / 0.1L`;
-  particles100El.textContent = counts["10.0"] === null ? "-" : `${counts["10.0"]} / 0.1L`;
+  // Counts in CSV are per 0.1L — display scaled to per 1.0L
+  particles03El.textContent = counts["0.3"] === null ? "-" : `${counts["0.3"] * 10} / 1.0L`;
+  particles05El.textContent = counts["0.5"] === null ? "-" : `${counts["0.5"] * 10} / 1.0L`;
+  particles10smallEl.textContent = counts["1.0"] === null ? "-" : `${counts["1.0"] * 10} / 1.0L`;
+  particles25El.textContent = counts["2.5"] === null ? "-" : `${counts["2.5"] * 10} / 1.0L`;
+  particles50El.textContent = counts["5.0"] === null ? "-" : `${counts["5.0"] * 10} / 1.0L`;
+  particles100El.textContent = counts["10.0"] === null ? "-" : `${counts["10.0"] * 10} / 1.0L`;
+}
+
+function renderParticleSizes(series) {
+  if (!series || series.length === 0) return;
+  particleSizesChart.data.labels = series.map((s) => s.timeLabel);
+  const sizes = ["0.3", "0.5", "1.0", "2.5", "5.0", "10.0"];
+  for (let i = 0; i < sizes.length; i += 1) {
+    const key = `cnt_${sizes[i].replace('.', '_')}`;
+    particleSizesChart.data.datasets[i].data = series.map((s) => (s[key] === undefined ? 0 : s[key]));
+  }
+  particleSizesChart.update();
 }
 
 function getLatestCsvTimestamp(csvText) {

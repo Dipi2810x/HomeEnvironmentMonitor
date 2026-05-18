@@ -7,7 +7,7 @@ Run the local logger:
 
 python3 reading_serial_data.py
 
-The serial logger is hardcoded to COM3 at 115200 baud.
+The serial logger is hardcoded to COM3 at 9600 baud.
 
 Daily CSV behavior:
 
