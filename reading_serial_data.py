@@ -6,7 +6,7 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-SERIAL_PORT = "COM3"
+SERIAL_PORT = "/dev/tty.usbmodem14101" #is `CM03 for windows laptops
 BAUD_RATE = 9600
 GIT_SYNC_INTERVAL_SECONDS = 300
 
